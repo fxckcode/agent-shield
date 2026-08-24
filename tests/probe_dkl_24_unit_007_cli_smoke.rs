@@ -7,7 +7,7 @@ use std::process::Command;
 
 /// Path to the compiled binary under test.
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agent-guard-proxy")
+    env!("CARGO_BIN_EXE_agent-shield")
 }
 
 #[test]
