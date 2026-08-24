@@ -45,7 +45,9 @@ fn bad_request(msg: &str) -> Vec<u8> {
 /// Whether this binary honors the AGP_ALLOW_PRIVATE escape (same env var
 /// as the fetch path; deliberately shared so tests can flip both).
 fn allow_private() -> bool {
-    std::env::var("AGP_ALLOW_PRIVATE").map(|v| v == "1").unwrap_or(false)
+    std::env::var("AGP_ALLOW_PRIVATE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Read one request line (CRLF terminated) from the stream.
@@ -80,9 +82,17 @@ fn check_endpoint(host_port: &str, corr: &str) -> Result<(), FetchError> {
 fn handle_connect(host_port: &str, mut client: TcpStream, corr: &str) -> std::io::Result<()> {
     if let Err(e) = check_endpoint(host_port, corr) {
         let reason = e.reason();
-        let _ = client.write_all(&blocked_response(&reason, corr));
+        let _ = client.write_all(&blocked_response(reason, corr));
+        let _ = client.flush();
+        let _ = client.shutdown(std::net::Shutdown::Both);
         return Ok(());
     }
+
+    // Drenar los headers del CONNECT hasta CRLFCRLF: el read_line previo
+    // consumió solo la request line; los headers restantes vivirían en el
+    // socket y, si no se consumen, el túnel los mandaría al upstream como
+    // si fueran el primer mensaje TLS (rompe el handshake).
+    drain_headers(&mut client)?;
 
     let upstream = match TcpStream::connect(host_port) {
         Ok(s) => s,
@@ -93,13 +103,14 @@ fn handle_connect(host_port: &str, mut client: TcpStream, corr: &str) -> std::io
                 err
             );
             let _ = client.write_all(body.as_bytes());
+            let _ = client.flush();
+            let _ = client.shutdown(std::net::Shutdown::Both);
             return Ok(());
         }
     };
 
-    if let Err(e) = client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n") {
-        return Err(e);
-    }
+    client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;
+    let _ = client.flush();
 
     // Bidirectional tunnel: client -> upstream and upstream -> client.
     let mut upstream = upstream;
@@ -121,6 +132,62 @@ fn handle_connect(host_port: &str, mut client: TcpStream, corr: &str) -> std::io
     Ok(())
 }
 
+/// Rewrite the Host header inside a raw header block (up to CRLFCRLF) to the
+/// absolute target host, or append one if missing.
+fn rewrite_host_header(headers: &[u8], host: &str, port: u16) -> Vec<u8> {
+    let host_header = if port == 80 || port == 443 {
+        format!("Host: {}", host)
+    } else {
+        format!("Host: {}:{}", host, port)
+    };
+    let text = String::from_utf8_lossy(headers);
+    let mut out = Vec::with_capacity(headers.len() + 32);
+    let mut found = false;
+    for (i, line) in text.split_inclusive("\r\n").enumerate() {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("host:") {
+            out.extend_from_slice(format!("{}\r\n", host_header).as_bytes());
+            found = true;
+        } else if line == "\r\n" && !found {
+            // End of headers with no Host → insert before the blank line.
+            out.extend_from_slice(format!("{}\r\n", host_header).as_bytes());
+            out.extend_from_slice(line.as_bytes());
+            found = true;
+        } else {
+            out.extend_from_slice(line.as_bytes());
+        }
+        if i > 64 {
+            break;
+        }
+    }
+    // Safety: if no CRLFCRLF was present and nothing matched, add Host at end.
+    if !found {
+        out.extend_from_slice(format!("{}\r\n", host_header).as_bytes());
+    }
+    out
+}
+
+/// Consume request headers from the client up to and including CRLFCRLF.
+/// Bytes beyond the end-of-headers marker are NOT consumed (they belong to
+/// the tunnel payload, e.g. a pipelined TLS ClientHello).
+fn drain_headers(client: &mut TcpStream) -> std::io::Result<()> {
+    let mut buf = [0u8; 4096];
+    let mut acc: Vec<u8> = Vec::new();
+    loop {
+        let n = client.read(&mut buf)?;
+        if n == 0 {
+            return Ok(());
+        }
+        acc.extend_from_slice(&buf[..n]);
+        if acc.windows(4).any(|w| w == b"\r\n\r\n") {
+            return Ok(());
+        }
+        if acc.len() > MAX_LINE * 4 {
+            return Ok(());
+        }
+    }
+}
+
 /// Handle an absolute-form HTTP request (GET http://host/path): validate
 /// the destination, then proxy the request line + headers + body.
 fn handle_absolute(client: &mut TcpStream, request_line: &str, corr: &str) -> std::io::Result<()> {
@@ -133,17 +200,23 @@ fn handle_absolute(client: &mut TcpStream, request_line: &str, corr: &str) -> st
         Ok(u) => u,
         Err(_) => {
             let _ = client.write_all(&bad_request("absolute URL required"));
+            let _ = client.flush();
+            let _ = client.shutdown(std::net::Shutdown::Both);
             return Ok(());
         }
     };
     if url.scheme() != "http" {
         let _ = client.write_all(&bad_request("only http:// supported for absolute proxying"));
+        let _ = client.flush();
+        let _ = client.shutdown(std::net::Shutdown::Both);
         return Ok(());
     }
     let host = match url.host_str() {
         Some(h) => h.to_string(),
         None => {
             let _ = client.write_all(&bad_request("missing host"));
+            let _ = client.flush();
+            let _ = client.shutdown(std::net::Shutdown::Both);
             return Ok(());
         }
     };
@@ -152,7 +225,9 @@ fn handle_absolute(client: &mut TcpStream, request_line: &str, corr: &str) -> st
 
     if let Err(e) = check_endpoint(&host_port, corr) {
         let reason = e.reason();
-        let _ = client.write_all(&blocked_response(&reason, corr));
+        let _ = client.write_all(&blocked_response(reason, corr));
+        let _ = client.flush();
+        let _ = client.shutdown(std::net::Shutdown::Both);
         return Ok(());
     }
 
@@ -204,10 +279,13 @@ fn handle_absolute(client: &mut TcpStream, request_line: &str, corr: &str) -> st
         }
     }
     if let Some(pos) = body_start {
-        // Headers end at pos; write header bytes (excluding body) upstream,
-        // then write the body that we already buffered.
-        let _ = upstream.write_all(&header_bytes[..pos]);
-        let _ = upstream.write_all(&header_bytes[pos..]);
+        // Headers end at pos. Rewrite any Host header to the absolute target
+        // host (the client one may be wrong/absent for absolute-form).
+        let headers = &header_bytes[..pos];
+        let body = &header_bytes[pos..];
+        let rewrite = rewrite_host_header(headers, &host, port);
+        let _ = upstream.write_all(&rewrite);
+        let _ = upstream.write_all(body);
     } else {
         let _ = upstream.write_all(&header_bytes);
     }
@@ -220,7 +298,7 @@ fn handle_absolute(client: &mut TcpStream, request_line: &str, corr: &str) -> st
             Ok(n) => n,
             Err(_) => break,
         };
-        if let Err(_) = client.write_all(&resp_buf[..n]) {
+        if client.write_all(&resp_buf[..n]).is_err() {
             break;
         }
         if n < 8192 {
@@ -263,8 +341,7 @@ fn handle_client(mut stream: TcpStream) {
 /// Returns an error string if the listener cannot bind.
 pub fn serve(port: u16) -> Result<(), String> {
     let addr = format!("127.0.0.1:{}", port);
-    let listener =
-        TcpListener::bind(&addr).map_err(|e| format!("cannot bind {}: {}", addr, e))?;
+    let listener = TcpListener::bind(&addr).map_err(|e| format!("cannot bind {}: {}", addr, e))?;
     let _ = listener.set_nonblocking(false);
     eprintln!("agent-shield forward proxy listening on {}", addr);
 
