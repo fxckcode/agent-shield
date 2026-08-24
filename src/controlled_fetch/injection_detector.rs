@@ -16,34 +16,40 @@ pub struct ClassificationResult {
 ///
 /// Each version defines a set of regex patterns that match known
 /// prompt-injection techniques.
-fn get_patterns_for_version(version: &str) -> Vec<(&'static str, &'static str)> {
+fn get_patterns_for_version(version: &str) -> Vec<(&'static str, &'static str, f64)> {
     // Currently only v1 exists; parameter reserved for future versions.
     let _ = version;
     vec![
         (
             "system_override",
             r"(?i)(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|context)",
+            0.85,
         ),
-        ("role_injection", r"(?i)you\s+are\s+now\s+(a|an)\s+"),
+        ("role_injection", r"(?i)you\s+are\s+now\s+(a|an)\s+", 0.6),
         (
             "instruction_delimiter",
             r"(?i)(###?\s*(system|instruction|prompt)|<\s*system\s*>|<\s*/?\s*instructions?\s*>)",
+            0.5,
         ),
         (
             "jailbreak_attempt",
             r"(?i)(do\s+anything\s+now|dan\s+mode|developer\s+mode|bypass\s+(safety|filter|restriction))",
+            0.75,
         ),
         (
             "policy_override",
             r"(?i)(new\s+rules?|override\s+(policy|permissions?|rules?)|grant\s+(all|admin|root)\s+access)",
+            0.8,
         ),
         (
             "tool_manipulation",
             r"(?i)(execute\s+tool|call\s+function|invoke\s+(api|endpoint)|run\s+command)\s+",
+            0.7,
         ),
         (
             "context_escape",
             r"(?i)(end\s+of\s+(context|prompt)|---+\s*(end|system)|<\|end\|>)",
+            0.7,
         ),
     ]
 }
@@ -70,12 +76,13 @@ pub fn classify_content(
     let mut max_confidence: f64 = 0.0;
     let mut detected = false;
 
-    for (_name, pattern_str) in &patterns {
+    for (_name, pattern_str, weight) in &patterns {
         if let Ok(re) = Regex::new(pattern_str) {
             if re.is_match(&content) {
                 detected = true;
-                // Each pattern match increases confidence
-                max_confidence = (max_confidence + 0.4).min(1.0);
+                // Confidence = max pattern weight matched (overlapping patterns
+                // add a small boost, capped at 1.0).
+                max_confidence = (max_confidence + weight).min(1.0);
             }
         }
     }
