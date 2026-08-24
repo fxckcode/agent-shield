@@ -44,7 +44,21 @@ fn print_help() {
 
 fn run_fetch(url: &str) -> ExitCode {
     let request = FetchRequest::new(url);
-    let policy = FetchPolicy::default();
+    let mut policy = FetchPolicy::default();
+
+    // Escape controlado para E2E/desarrollo local: AGP_ALLOW_PRIVATE=1 permite
+    // destinos privados/loopback. Solo afecta la policy de IPs; el resto de la
+    // política (redirects, content types, injection, envelope) sigue activo.
+    // Nunca habilitar en producción.
+    if std::env::var("AGP_ALLOW_PRIVATE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        eprintln!(
+            r#"{{"status":"warn","message":"AGP_ALLOW_PRIVATE=1: bloqueo de IPs privadas DESACTIVADO (solo para testing local)"}}"#
+        );
+        policy.block_private_ips = false;
+    }
 
     match fetch_with_policy(&request, &policy) {
         Ok(envelope) => {
