@@ -1,5 +1,5 @@
 [package]
-name = "agent-guard-proxy"
+name = "agent-shield"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,7 +13,7 @@ name = "agent_guard_proxy"
 path = "src/lib.rs"
 
 [[bin]]
-name = "agent-guard-proxy"
+name = "agent-shield"
 path = "src/main.rs"
 
 [profile.release]

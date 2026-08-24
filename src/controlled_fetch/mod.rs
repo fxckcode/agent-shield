@@ -7,7 +7,7 @@ mod content_filter;
 mod envelope;
 mod error;
 mod injection_detector;
-mod ip_validator;
+pub mod ip_validator;
 mod policy;
 mod redirect;
 mod request;

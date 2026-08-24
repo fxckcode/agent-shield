@@ -1,6 +1,7 @@
 use agent_guard_proxy::controlled_fetch::{
     fetch_with_policy, FetchPolicy, FetchRequest, UntrustedEnvelope,
 };
+use agent_guard_proxy::forward_server;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -15,6 +16,37 @@ fn main() -> ExitCode {
         "--help" | "-h" => {
             print_help();
             ExitCode::SUCCESS
+        }
+        "serve" => {
+            // agent-guard-proxy serve [--port N]
+            let mut port: u16 = 8087;
+            let mut i = 1;
+            while i < args.len() {
+                if args[i] == "--port" {
+                    if i + 1 < args.len() {
+                        match args[i + 1].parse::<u16>() {
+                            Ok(p) => port = p,
+                            Err(_) => {
+                                eprint_usage_error("--port must be a number");
+                                return ExitCode::from(2);
+                            }
+                        }
+                        i += 2;
+                    } else {
+                        eprint_usage_error("--port requires a value");
+                        return ExitCode::from(2);
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            match forward_server::serve(port) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprint_usage_error(&e);
+                    ExitCode::from(1)
+                }
+            }
         }
         "fetch" => {
             if args.len() < 2 {
@@ -31,15 +63,20 @@ fn main() -> ExitCode {
 }
 
 fn print_help() {
-    println!("agent-guard-proxy — controlled fetch CLI adapter");
+    println!("agent-shield — secure fetch gateway and forward proxy for agent CLIs");
     println!();
     println!("USAGE:");
-    println!("  agent-guard-proxy fetch <url>   Fetch a URL through the security policy");
-    println!("  agent-guard-proxy --help        Show this help message");
+    println!("  agent-shield fetch <url>            Fetch a URL through the security policy");
+    println!("  agent-shield serve [--port N]       Run forward proxy (default port 8087)");
+    println!("  agent-shield --help                 Show this help message");
     println!();
-    println!("The fetch command applies SSRF protection, redirect validation,");
-    println!("content filtering, and prompt-injection detection before returning");
-    println!("content wrapped in an untrusted-data envelope.");
+    println!("fetch applies SSRF protection, redirect validation, content filtering,");
+    println!("and prompt-injection detection before returning content wrapped in an");
+    println!("untrusted-data envelope.");
+    println!();
+    println!("serve exposes an HTTP forward proxy that validates every destination");
+    println!("(CONNECT and absolute requests) against the blocked-IP policy before");
+    println!("opening a tunnel. Point an agent CLI at it with HTTP(S)_PROXY.");
 }
 
 fn run_fetch(url: &str) -> ExitCode {

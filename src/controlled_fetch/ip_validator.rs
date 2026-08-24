@@ -112,6 +112,28 @@ pub fn validate_connected_ip(ip: &IpAddr, correlation_id: &str) -> Result<(), Fe
     Ok(())
 }
 
+/// Validate a `host:port` endpoint by resolving it and checking each
+/// address against the blocked-IP policy. Used by the forward-proxy server
+/// before opening a tunnel (CONNECT) or proxying an absolute request.
+///
+/// Returns Ok if the endpoint is allowed, Err(SsrfPrivateIp) otherwise.
+pub fn validate_endpoint(host_port: &str, correlation_id: &str) -> Result<(), FetchError> {
+    let addr_str = if host_port.contains(':') {
+        host_port.to_string()
+    } else {
+        format!("{}:80", host_port)
+    };
+    let addrs = addr_str
+        .to_socket_addrs()
+        .map_err(|_| FetchError::new(BlockReason::TransportError, correlation_id))?;
+    for addr in addrs {
+        if is_blocked_ip(&addr.ip()) {
+            return Err(FetchError::new(BlockReason::SsrfPrivateIp, correlation_id));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
