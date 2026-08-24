@@ -1,0 +1,17 @@
+[package]
+name = "agent-guard-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uuid = { version = "1.10.0", features = ["v4"] }
+url = "2.5.2"
+regex = "1.10.6"
+
+[lib]
+name = "agent_guard_proxy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-guard-proxy"
+path = "src/main.rs"
