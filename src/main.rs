@@ -1,7 +1,11 @@
 use agent_guard_proxy::controlled_fetch::{
-    fetch_with_policy, FetchPolicy, FetchRequest, UntrustedEnvelope,
+    fetch_with_policy, fetch_with_policy_durable, FetchPolicy, FetchRequest, UntrustedEnvelope,
 };
 use agent_guard_proxy::forward_server;
+use agent_guard_proxy::recovery::{
+    recover_pending, DurableStore, RecoveryPolicy, DEFAULT_HEARTBEAT_TTL_SECS,
+};
+use std::path::Path;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -18,27 +22,95 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "serve" => {
-            // agent-guard-proxy serve [--port N]
+            // agent-shield serve [--port N] [--state-dir DIR] [--policy resume|block] [--ttl SECS]
             let mut port: u16 = 8087;
+            let mut state_dir: Option<String> = None;
+            let mut policy: Option<RecoveryPolicy> = None;
+            let mut ttl: Option<u64> = None;
             let mut i = 1;
             while i < args.len() {
-                if args[i] == "--port" {
-                    if i + 1 < args.len() {
-                        match args[i + 1].parse::<u16>() {
-                            Ok(p) => port = p,
-                            Err(_) => {
-                                eprint_usage_error("--port must be a number");
-                                return ExitCode::from(2);
+                match args[i].as_str() {
+                    "--port" => {
+                        if i + 1 < args.len() {
+                            match args[i + 1].parse::<u16>() {
+                                Ok(p) => port = p,
+                                Err(_) => {
+                                    eprint_usage_error("--port must be a number");
+                                    return ExitCode::from(2);
+                                }
                             }
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--port requires a value");
+                            return ExitCode::from(2);
                         }
-                        i += 2;
-                    } else {
-                        eprint_usage_error("--port requires a value");
+                    }
+                    "--state-dir" => {
+                        if i + 1 < args.len() {
+                            state_dir = Some(args[i + 1].clone());
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--state-dir requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    "--policy" => {
+                        if i + 1 < args.len() {
+                            match RecoveryPolicy::parse(&args[i + 1]) {
+                                Some(p) => policy = Some(p),
+                                None => {
+                                    eprint_usage_error("--policy must be 'resume' or 'block'");
+                                    return ExitCode::from(2);
+                                }
+                            }
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--policy requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    "--ttl" => {
+                        if i + 1 < args.len() {
+                            match args[i + 1].parse::<u64>() {
+                                Ok(t) if t > 0 => ttl = Some(t),
+                                _ => {
+                                    eprint_usage_error(
+                                        "--ttl must be a positive number of seconds",
+                                    );
+                                    return ExitCode::from(2);
+                                }
+                            }
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--ttl requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    _ => {
+                        eprint_usage_error(&format!(
+                            "Unknown serve option: {}",
+                            escape_json_string(&args[i])
+                        ));
                         return ExitCode::from(2);
                     }
-                } else {
-                    i += 1;
                 }
+            }
+            // Durable recovery at proxy startup (opt-in via state dir).
+            let state_dir = state_dir.or_else(|| env_opt("AGP_STATE_DIR"));
+            if let Some(dir) = state_dir {
+                let policy = policy.unwrap_or_else(|| env_recovery_policy(RecoveryPolicy::Resume));
+                let ttl = ttl.unwrap_or_else(|| env_ttl_secs(DEFAULT_HEARTBEAT_TTL_SECS));
+                let store = DurableStore::new(Path::new(&dir), ttl);
+                let report = recover_pending(&store, policy);
+                eprintln!(
+                    "agent-shield recovery: resumed={} blocked={} failed={} (policy={}, ttl={}s, state_dir={})",
+                    report.resumed,
+                    report.blocked,
+                    report.failed,
+                    policy.as_str(),
+                    ttl,
+                    dir
+                );
             }
             match forward_server::serve(port) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -49,11 +121,118 @@ fn main() -> ExitCode {
             }
         }
         "fetch" => {
-            if args.len() < 2 {
-                eprint_usage_error("Missing URL argument. Usage: agent-guard-proxy fetch <url>");
-                return ExitCode::from(2);
+            // agent-shield fetch <url> [--state-dir DIR] [--resume REQID]
+            let mut url_arg: Option<String> = None;
+            let mut state_dir: Option<String> = None;
+            let mut resume_id: Option<String> = None;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--state-dir" => {
+                        if i + 1 < args.len() {
+                            state_dir = Some(args[i + 1].clone());
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--state-dir requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    "--resume" => {
+                        if i + 1 < args.len() {
+                            resume_id = Some(args[i + 1].clone());
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--resume requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    other if url_arg.is_none() && !other.starts_with("--") => {
+                        url_arg = Some(args[i].clone());
+                        i += 1;
+                    }
+                    _ => {
+                        eprint_usage_error(&format!(
+                            "Unknown fetch option: {}",
+                            escape_json_string(&args[i])
+                        ));
+                        return ExitCode::from(2);
+                    }
+                }
             }
-            run_fetch(&args[1])
+            let Some(url) = url_arg else {
+                eprint_usage_error("Missing URL argument. Usage: agent-shield fetch <url>");
+                return ExitCode::from(2);
+            };
+            run_fetch(&url, state_dir.as_deref(), resume_id.as_deref())
+        }
+        "recover" => {
+            // agent-shield recover [--state-dir DIR] [--policy resume|block] [--ttl SECS]
+            let mut state_dir: Option<String> = None;
+            let mut policy: Option<RecoveryPolicy> = None;
+            let mut ttl: Option<u64> = None;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--state-dir" => {
+                        if i + 1 < args.len() {
+                            state_dir = Some(args[i + 1].clone());
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--state-dir requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    "--policy" => {
+                        if i + 1 < args.len() {
+                            match RecoveryPolicy::parse(&args[i + 1]) {
+                                Some(p) => policy = Some(p),
+                                None => {
+                                    eprint_usage_error("--policy must be 'resume' or 'block'");
+                                    return ExitCode::from(2);
+                                }
+                            }
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--policy requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    "--ttl" => {
+                        if i + 1 < args.len() {
+                            match args[i + 1].parse::<u64>() {
+                                Ok(t) if t > 0 => ttl = Some(t),
+                                _ => {
+                                    eprint_usage_error(
+                                        "--ttl must be a positive number of seconds",
+                                    );
+                                    return ExitCode::from(2);
+                                }
+                            }
+                            i += 2;
+                        } else {
+                            eprint_usage_error("--ttl requires a value");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    _ => {
+                        eprint_usage_error(&format!(
+                            "Unknown recover option: {}",
+                            escape_json_string(&args[i])
+                        ));
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            let dir = match state_dir.or_else(|| env_opt("AGP_STATE_DIR")) {
+                Some(d) if !d.trim().is_empty() => d,
+                _ => {
+                    eprint_usage_error("recover requires --state-dir (or set AGP_STATE_DIR)");
+                    return ExitCode::from(2);
+                }
+            };
+            let policy = policy.unwrap_or_else(|| env_recovery_policy(RecoveryPolicy::Resume));
+            let ttl = ttl.unwrap_or_else(|| env_ttl_secs(DEFAULT_HEARTBEAT_TTL_SECS));
+            run_recover(&dir, policy, ttl)
         }
         "wrap" => {
             let code = wrap_command(&args[1..]);
@@ -74,8 +253,14 @@ fn print_help() {
     println!("agent-shield — secure fetch gateway and forward proxy for agent CLIs");
     println!();
     println!("USAGE:");
-    println!("  agent-shield fetch <url>            Fetch a URL through the security policy");
-    println!("  agent-shield serve [--port N]       Run forward proxy (default port 8087)");
+    println!("  agent-shield fetch <url> [--state-dir DIR] [--resume REQID]");
+    println!("                                     Fetch a URL through the security policy");
+    println!(
+        "  agent-shield serve [--port N] [--state-dir DIR] [--policy resume|block] [--ttl SECS]"
+    );
+    println!("                                     Run forward proxy (default port 8087)");
+    println!("  agent-shield recover [--state-dir DIR] [--policy resume|block] [--ttl SECS]");
+    println!("                                     Recover interrupted durable fetch requests");
     println!("  agent-shield wrap --list            List supported agent CLIs and detection");
     println!("  agent-shield wrap <cli> [--port N] [--dry-run]");
     println!("                                     Configure an agent CLI to route through");
@@ -84,14 +269,18 @@ fn print_help() {
     println!();
     println!("fetch applies SSRF protection, redirect validation, content filtering,");
     println!("and prompt-injection detection before returning content wrapped in an");
-    println!("untrusted-data envelope.");
+    println!("untrusted-data envelope. With --state-dir (or AGP_STATE_DIR) the pipeline");
+    println!("persists durable work units: --resume continues an interrupted request");
+    println!("from its last persisted unit without re-executing completed units.");
     println!();
     println!("serve exposes an HTTP forward proxy that validates every destination");
     println!("(CONNECT and absolute requests) against the blocked-IP policy before");
-    println!("opening a tunnel. Point an agent CLI at it with HTTP(S)_PROXY.");
+    println!("opening a tunnel. Point an agent CLI at it with HTTP(S)_PROXY. With a");
+    println!("state dir configured, serve runs recovery for interrupted requests at");
+    println!("startup (recovery policy/env: AGP_RECOVERY_POLICY, AGP_HEARTBEAT_TTL_SECS).");
 }
 
-fn run_fetch(url: &str) -> ExitCode {
+fn run_fetch(url: &str, state_dir: Option<&str>, resume_id: Option<&str>) -> ExitCode {
     let request = FetchRequest::new(url);
     let mut policy = FetchPolicy::default();
 
@@ -109,16 +298,104 @@ fn run_fetch(url: &str) -> ExitCode {
         policy.block_private_ips = false;
     }
 
-    match fetch_with_policy(&request, &policy) {
-        Ok(envelope) => {
-            print_success(&envelope);
-            ExitCode::SUCCESS
+    // Durable mode: explicit flag > AGP_STATE_DIR env.
+    let state_dir = match state_dir {
+        Some(d) if !d.trim().is_empty() => Some(d.to_string()),
+        _ => env_opt("AGP_STATE_DIR"),
+    };
+
+    if let Some(dir) = state_dir {
+        let request_id = match resume_id {
+            Some(rid) if !rid.trim().is_empty() => rid.to_string(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        };
+        let ttl = env_ttl_secs(DEFAULT_HEARTBEAT_TTL_SECS);
+        let store = DurableStore::new(Path::new(&dir), ttl);
+        match fetch_with_policy_durable(&request, &policy, &request_id, &store) {
+            Ok(envelope) => {
+                print_success_durable(&envelope, &request_id);
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                print_blocked(err.reason_code(), err.correlation_id());
+                ExitCode::from(1)
+            }
         }
-        Err(err) => {
-            print_blocked(err.reason_code(), err.correlation_id());
-            ExitCode::from(1)
+    } else {
+        match fetch_with_policy(&request, &policy) {
+            Ok(envelope) => {
+                print_success(&envelope);
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                print_blocked(err.reason_code(), err.correlation_id());
+                ExitCode::from(1)
+            }
         }
     }
+}
+
+/// Run one recovery pass over `<state_dir>` and print a machine-readable report.
+fn run_recover(state_dir: &str, policy: RecoveryPolicy, ttl: u64) -> ExitCode {
+    let store = DurableStore::new(Path::new(state_dir), ttl);
+    let report = recover_pending(&store, policy);
+    let mut items_json = String::new();
+    for (i, item) in report.items.iter().enumerate() {
+        if i > 0 {
+            items_json.push(',');
+        }
+        items_json.push_str(&format!(
+            r#"{{"request_id":"{}","unit_id":"{}","outcome":"{}","reason":"{}"}}"#,
+            escape_json_string(&item.request_id),
+            escape_json_string(&item.unit_id),
+            escape_json_string(item.outcome.as_str()),
+            escape_json_string(&item.reason)
+        ));
+    }
+    println!(
+        r#"{{"status":"ok","state_dir":"{}","policy":"{}","ttl_secs":{},"resumed":{},"blocked":{},"failed":{},"items":[{}]}}"#,
+        escape_json_string(state_dir),
+        policy.as_str(),
+        ttl,
+        report.resumed,
+        report.blocked,
+        report.failed,
+        items_json
+    );
+    ExitCode::SUCCESS
+}
+
+fn env_opt(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn env_ttl_secs(default: u64) -> u64 {
+    env_opt("AGP_HEARTBEAT_TTL_SECS")
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|t| *t > 0)
+        .unwrap_or(default)
+}
+
+fn env_recovery_policy(default: RecoveryPolicy) -> RecoveryPolicy {
+    env_opt("AGP_RECOVERY_POLICY")
+        .and_then(|v| RecoveryPolicy::parse(&v))
+        .unwrap_or(default)
+}
+
+fn print_success_durable(envelope: &UntrustedEnvelope, request_id: &str) {
+    let classification = format!("{:?}", envelope.classification());
+    let body_escaped = escape_json_string(&envelope.body_str());
+    let corr_escaped = escape_json_string(envelope.correlation_id());
+    let class_escaped = escape_json_string(&classification);
+    let rid_escaped = escape_json_string(request_id);
+
+    println!(
+        r#"{{"status":"allowed","request_id":"{}","correlation_id":"{}","classification":"{}","body":"{}"}}"#,
+        rid_escaped, corr_escaped, class_escaped, body_escaped
+    );
 }
 
 fn print_success(envelope: &UntrustedEnvelope) {

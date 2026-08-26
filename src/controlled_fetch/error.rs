@@ -24,6 +24,9 @@ pub enum BlockReason {
     UnsupportedScheme,
     /// Transport-level I/O error (connection refused, timeout, etc.).
     TransportError,
+    /// Work-unit durable store I/O error (state dir unavailable, record
+    /// corrupt, or a unit transition was rejected).
+    DurableStoreError,
 }
 
 impl BlockReason {
@@ -40,6 +43,7 @@ impl BlockReason {
             Self::InjectionClassifierUncertain => "INJECTION_CLASSIFIER_UNCERTAIN",
             Self::UnsupportedScheme => "UNSUPPORTED_SCHEME",
             Self::TransportError => "TRANSPORT_ERROR",
+            Self::DurableStoreError => "DURABLE_STORE_ERROR",
         }
     }
 }
