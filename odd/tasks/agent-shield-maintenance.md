@@ -12,9 +12,9 @@ Resolve the three maintenance findings raised by the owner without bypassing the
 - `AGENTS.md` — no agent write; provide exact replacement text to the owner because the approval guard refused prior edits.
 
 ## Tasks
-- [x] M1 — Remove the unsupported Wayfinding instructions from `docs/agents/issue-tracker.md`.
-- [ ] M2 — Document `probes/fixture_server.py` as a manual-only localhost utility in `probes/README.md`.
-- [ ] M3 — Hand the owner the exact `AGENTS.md` replacements; do not edit this guarded file.
+- [x] M1 — Remove the unsupported Wayfinding instructions from `docs/agents/issue-tracker.md` (commit `d10e68bd34419ae73b3aaf5ca2031f31880da90a`).
+- [x] M2 — Document `probes/fixture_server.py` as a manual-only localhost utility in `probes/README.md`.
+- [ ] M3 — Hand the owner the exact `AGENTS.md` replacements; do not edit this guarded file. This remains blocked for human application.
 
 ## Acceptance criteria
 - `docs/agents/issue-tracker.md` no longer promises a `/wayfinder` label workflow that the repository and GitHub do not provide.
@@ -32,5 +32,8 @@ Resolve the three maintenance findings raised by the owner without bypassing the
 - Initial inspection at `59bb44f2ea80aceb9ed29911474d60e83e272c81`; working tree was clean; latest CI `38927847139` succeeded.
 - CodeGraph index/CLI are unavailable on this host; used bounded Git/repository inspection instead.
 - A read-only consult with `mattpocock-expert` recommended documenting the fixture as a manual utility and removing the unsupported Wayfinding section.
-- Engram mirror is pending: the memory backend does not recognize this repository as a project; do not guess a project key.
-- Next step: delegated M1/M2, then structural readback and one local work-unit commit per completed task.
+- M1 completed as passive documentation; `git diff --check` passed and structural readback confirmed only the unsupported Wayfinding section was removed. Commit: `d10e68bd34419ae73b3aaf5ca2031f31880da90a`.
+- M2 completed as passive documentation; `git diff --check` passed and structural readback confirmed the manual invocation, default port, loopback binding, GET response, and that current probes/CI do not use the fixture.
+- The writer ran the claim auditor once; it returned code 0 and six review items. Two AGENTS.md probe paths are prefix-only false positives, two CONTEXT.md references are optional, and the auditor currently omits nested `probes/README.md`; it therefore still flags the standalone fixture as undocumented. The actual README was read back and documents it.
+- `AGENTS.md` remains untouched. Engram mirror is pending: the memory backend does not recognize this repository as a project; do not guess a project key.
+- Next step: record the M2 work-unit commit; hand the exact AGENTS.md replacement to the owner, who must apply it through the approval gate.
