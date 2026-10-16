@@ -1,8 +1,8 @@
-use agent_guard_proxy::controlled_fetch::{
+use agent_shield::controlled_fetch::{
     fetch_with_policy, fetch_with_policy_durable, FetchPolicy, FetchRequest, UntrustedEnvelope,
 };
-use agent_guard_proxy::forward_server;
-use agent_guard_proxy::recovery::{
+use agent_shield::forward_server;
+use agent_shield::recovery::{
     recover_pending, DurableStore, RecoveryPolicy, DEFAULT_HEARTBEAT_TTL_SECS,
 };
 use std::path::Path;

@@ -20,8 +20,9 @@ permissions. agent-shield gives you a single, policy-enforced choke point.
 
 ## Features
 
-- **SSRF protection** — private, loopback, link-local, metadata, and
-  disallowed-resolved IP destinations are blocked before the connection.
+- **SSRF protection** — loopback, private, link-local, metadata, CGNAT, reserved, and
+  unspecified destinations (`0.0.0.0`, `::`) are blocked before the connection, for IPv4
+  and IPv6 alike.
 - **Redirect safety** — every redirect hop is revalidated; a chain cannot
   escape to a blocked destination.
 - **Content filtering** — unsupported or dangerous content types, oversized
@@ -33,7 +34,8 @@ permissions. agent-shield gives you a single, policy-enforced choke point.
 - **Safe block reporting** — every block includes a reason code and a
   correlation id, without echoing secrets or hostile payloads.
 - **Forward proxy server** — `serve` validates every CONNECT/absolute request
-  destination before opening the tunnel (`HTTP(S)_PROXY` compatible).
+  destination before opening the tunnel and connects to the exact address it validated
+  (`HTTP(S)_PROXY` compatible).
 
 ## Build
 
@@ -45,13 +47,27 @@ cargo build --release        # optimized: LTO + strip + opt-level=3
 
 ```bash
 cargo fmt --check
-cargo clippy -- -D warnings
-cargo test                   # 75 unit + integration + probe tests
-python3 probes/e2e_full.py            # fetch E2E vs local fixtures (9/9)
-python3 probes/e2e_proxy_server.py    # forward-proxy E2E vs real network (7/7)
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked            # 94 tests (unit + integration)
+python3 probes/checklist.py    # the six acceptance properties, in order
+python3 probes/e2e_full.py            # fetch E2E vs local fixtures (needs a built release binary)
+python3 probes/e2e_proxy_server.py    # forward-proxy E2E vs real network (needs a built release binary)
 ```
 
-CI (`.github/workflows/ci.yml`) enforces fmt/clippy/test on every push and PR.
+CI (`.github/workflows/ci.yml`) enforces fmt/clippy/test on every push and PR, and fails the
+build if the forward proxy reintroduces an unchecked `TcpStream::connect` on a host string.
+
+### Running the gates without installing Rust on the host
+
+The toolchain can stay in a container. Redirect `CARGO_TARGET_DIR` and `CARGO_HOME` outside the
+working tree so the container leaves no root-owned files in the repository:
+
+```bash
+docker run --rm -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target -e HOME=/tmp \
+  -v "$PWD":/w -v "$PWD/../.cargo-home":/cargo-home -v "$PWD/../.target":/target -w /w rust:1 \
+  bash -c 'rustup component add rustfmt clippy && cargo fmt --check && \
+           cargo clippy --all-targets --locked -- -D warnings && cargo test --locked'
+```
 
 ## CLI usage
 
@@ -177,16 +193,31 @@ reaches a terminal state (completed/blocked/failed).
 
 ## Security policy
 
-- Blocks: private/loopback/link-local/metadata IPs, dangerous content types,
-  oversized bodies, excessive redirects, detected prompt-injection.
-- **Fails closed**: any uncertain classification is treated as hostile.
-- Blocks are reported with a safe reason code and correlation id; secrets and
-  hostile payloads are never echoed.
+- **Blocked destinations**: loopback, RFC 1918 private, link-local and cloud metadata,
+  RFC 6598 CGNAT (`100.64.0.0/10`), `0.0.0.0/8`, `192.0.0.0/24`, `198.18.0.0/15`,
+  `240.0.0.0/4`, plus IPv6 loopback, the unspecified address `::`, multicast, IPv4-mapped,
+  link-local, and unique-local space. TEST-NET ranges stay reachable: they are unroutable
+  documentation space.
+- **One predicate, every caller**: `is_blocked_ip` serves the fetch path, the redirect
+  revalidation, and the forward proxy, so a range cannot be missing from only one of them.
+- **Validated address, pinned connection**: the proxy resolves once, validates, and connects to
+  the exact `SocketAddr` it checked — it never re-resolves the host name after validation, which
+  closes the DNS-rebinding window.
+- **Fails closed**: an unresolvable name, an empty resolution, or an uncertain classification is
+  denied, never treated as safe.
+- **Bounded**: connect, read, and write timeouts on both the fetch and proxy paths.
+- Blocks are reported with a safe reason code and correlation id; secrets and hostile payloads are
+  never echoed.
+
+Every claim above is backed by a test in the repository; `cargo test` and `probes/checklist.py`
+are the evidence.
 
 ## Non-goals
 
 - Perfect semantic detection of all prompt injection.
 - Replacing sandboxing or human review.
+- Acting as a general-purpose proxy: `serve` binds `127.0.0.1` only and is meant for local agent
+  CLIs, not for exposing a network.
 
 ## Similar projects
 

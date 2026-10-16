@@ -1,6 +1,6 @@
 //! Integration smoke tests for the CLI adapter binary.
 //!
-//! Verifies that the `agent-guard-proxy` binary exposes the controlled-fetch
+//! Verifies that the `agent-shield` binary exposes the controlled-fetch
 //! library through a minimal CLI surface with safe, structured output.
 
 use std::process::Command;

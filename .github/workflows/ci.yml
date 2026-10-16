@@ -11,6 +11,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      # Structural guard: the forward proxy must never connect to a host string.
+      # Resolving again after validating re-opens the DNS-rebinding window, so the
+      # validated SocketAddr is the only thing allowed to reach the connector.
+      - name: Guard against re-resolving a validated host
+        run: |
+          if grep -n 'TcpStream::connect(' src/forward_server.rs; then
+            echo "::error::forward_server.rs connects to a host string; connect to the validated SocketAddr instead"
+            exit 1
+          fi
+          echo "no unchecked TcpStream::connect in the forward proxy"

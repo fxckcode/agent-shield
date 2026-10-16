@@ -11,7 +11,7 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::thread;
 
-use agent_guard_proxy::controlled_fetch::{FetchPolicy, FetchRequest};
+use agent_shield::controlled_fetch::{FetchPolicy, FetchRequest};
 
 /// Helper: start a local TCP listener that sends a raw HTTP response, return the bound port.
 fn spawn_http_server(response_bytes: Vec<u8>) -> (u16, thread::JoinHandle<()>) {
@@ -53,7 +53,7 @@ fn real_transport_parses_status_headers_and_body() {
     };
 
     let req = FetchRequest::new(&format!("http://127.0.0.1:{}/test", port));
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     handle.join().unwrap();
 
@@ -74,7 +74,7 @@ fn private_destination_blocked_before_connect() {
     let policy = FetchPolicy::default(); // block_private_ips = true
 
     let req = FetchRequest::new(&format!("http://127.0.0.1:{}/secret", port));
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     // The server should NOT have received the connection (no bytes sent)
     // We can't easily assert the server saw nothing, but the error must fire.
@@ -107,7 +107,7 @@ fn oversized_body_blocked_before_delivery() {
     };
 
     let req = FetchRequest::new(&format!("http://127.0.0.1:{}/big", port));
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     handle.join().unwrap();
 
@@ -127,7 +127,7 @@ fn unsupported_scheme_https_fails_closed() {
     };
 
     let req = FetchRequest::new("https://example.com/page");
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     let err = result.expect_err("https must be rejected in HTTP-only transport");
     assert_eq!(err.reason_code(), "UNSUPPORTED_SCHEME");
@@ -141,7 +141,7 @@ fn unsupported_scheme_ftp_fails_closed() {
     };
 
     let req = FetchRequest::new("ftp://files.example.com/data.txt");
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     let err = result.expect_err("ftp must be rejected");
     assert_eq!(err.reason_code(), "UNSUPPORTED_SCHEME");
@@ -157,7 +157,7 @@ fn error_display_never_leaks_request_details() {
     let sensitive_url = "http://127.0.0.1:9999/super/secret/path?token=abc123";
     let policy = FetchPolicy::default();
     let req = FetchRequest::new(sensitive_url);
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     let err = result.expect_err("should block private IP");
     let display = format!("{}", err);
@@ -191,7 +191,7 @@ fn error_display_for_unsupported_scheme_never_leaks() {
         ..FetchPolicy::default()
     };
     let req = FetchRequest::new("https://evil.example.com/steal?data=payload");
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     let err = result.expect_err("https should be rejected");
     let display = format!("{}", err);
