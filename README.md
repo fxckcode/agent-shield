@@ -61,14 +61,15 @@ cargo build --release        # optimized: LTO + strip + opt-level=3
 ```bash
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked            # 108 tests (unit + integration)
+cargo test --locked            # full suite; the runner prints the count
 python3 probes/checklist.py    # the six acceptance properties, in order
-python3 probes/e2e_full.py            # fetch E2E vs local fixtures (needs a built release binary)
-python3 probes/e2e_proxy_server.py    # forward-proxy E2E vs real network (needs a built release binary)
+python3 probes/e2e_full.py            # fetch pipeline vs local fixtures (needs a built release binary)
+python3 probes/e2e_smoke.py           # fetch pipeline vs a public host (needs a built release binary)
+python3 probes/e2e_proxy_server.py    # forward proxy over raw sockets and a real TLS tunnel (needs a built release binary)
 ```
 
 CI (`.github/workflows/ci.yml`) runs fmt/clippy/test on every push and PR, fails the build if the
-forward proxy reintroduces an unchecked `TcpStream::connect` on a host string, and runs the four
+forward proxy reintroduces an unchecked `TcpStream::connect` on a host string, and runs all four
 probes above against the release binary so the proxy's byte-stream behaviour has an automated witness.
 
 ### Running the gates without installing Rust on the host
