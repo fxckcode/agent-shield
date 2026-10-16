@@ -33,7 +33,18 @@ Resolve the three maintenance findings raised by the owner without bypassing the
 - CodeGraph index/CLI are unavailable on this host; used bounded Git/repository inspection instead.
 - A read-only consult with `mattpocock-expert` recommended documenting the fixture as a manual utility and removing the unsupported Wayfinding section.
 - M1 completed as passive documentation; `git diff --check` passed and structural readback confirmed only the unsupported Wayfinding section was removed. Commit: `d10e68bd34419ae73b3aaf5ca2031f31880da90a`.
-- M2 completed as passive documentation; `git diff --check` passed and structural readback confirmed the manual invocation, default port, loopback binding, GET response, and that current probes/CI do not use the fixture.
+- M2 completed as passive documentation; `git diff --check` passed and structural readback confirmed the manual invocation, default port, loopback binding, GET response, and that current probes/CI do not use the fixture. Commit: `fa454fbbbcf7919db85129a9421bd891e6aad6e2`.
 - The writer ran the claim auditor once; it returned code 0 and six review items. Two AGENTS.md probe paths are prefix-only false positives, two CONTEXT.md references are optional, and the auditor currently omits nested `probes/README.md`; it therefore still flags the standalone fixture as undocumented. The actual README was read back and documents it.
 - `AGENTS.md` remains untouched. Engram mirror is pending: the memory backend does not recognize this repository as a project; do not guess a project key.
-- Next step: record the M2 work-unit commit; hand the exact AGENTS.md replacement to the owner, who must apply it through the approval gate.
+- Owner handoff for M3 (apply these lines through the approval gate):
+  - Replace the ADR sentence with:
+    ```text
+    Architecture decisions are recorded in the pull request that made them. See `docs/agents/domain.md`.
+    ```
+  - Replace the gates bullet with:
+    ```text
+    - Gates: `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+      `cargo test --locked`; CI also runs `probes/checklist.py`, `probes/e2e_full.py`,
+      `probes/e2e_smoke.py`, and `probes/e2e_proxy_server.py`.
+    ```
+- Next step: owner applies the AGENTS.md replacement through the approval gate; no PR or push was made.
