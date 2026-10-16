@@ -248,9 +248,12 @@ pub(crate) fn fetch_with_policy_durable_with_transport(
         complete_ok(store, request_id, "validate_target", now, &correlation_id)?;
     }
 
-    // Step 2 — network fetch with redirects (`fetch` unit; THE deduped side
-    // effect). The raw response is persisted BEFORE the unit completes so any
-    // resumed run continues from the payload instead of re-fetching.
+    // Step 2 — network fetch with redirects (`fetch` unit; the only unit with
+    // an external side effect). The raw response is persisted before the unit is
+    // marked completed, so a run resumed after that point reuses the payload
+    // instead of re-fetching. A crash between sending the request and marking the
+    // unit completed leaves it unfinished and the resumed run fetches again: that
+    // window is at-least-once and cannot be closed client-side.
     let fetch_response: Option<FetchResponse> =
         if !completed(store, request_id, "fetch", &correlation_id)? {
             start_unit_ok(store, request_id, "fetch", now, &correlation_id)?;

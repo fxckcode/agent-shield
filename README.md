@@ -186,10 +186,14 @@ interrupted process recovers safely on restart:
 - **Work units** — `parse`, `validate_target`, `fetch` (the only unit with
   external side effects: network I/O), and `process` (validate + classify +
   wrap). Every transition is written to disk *before* the next step runs.
-- **No duplicate side effects** — a completed work unit is never executed
-  twice. If the process dies after `fetch` completed, the raw response is
-  reloaded from the persisted payload and the pipeline continues without a
-  second network hit.
+- **At-least-once, with a persisted response** — a work unit already recorded
+  as completed is never executed twice: a run resumed after `fetch` completed
+  reloads the raw response from the persisted payload and continues without a
+  second network hit. The window between *sending* the remote request and
+  *recording* the `fetch` unit as completed cannot be closed from the client: a
+  crash inside it leaves the unit unfinished, so the resumed run re-fetches and
+  the request may reach the server twice. Pair this with an idempotent endpoint
+  on the far side, or use `--policy block` to fail closed instead of resuming.
 - **Heartbeat / TTL** — each running unit carries a heartbeat; a record whose
   heartbeat exceeds the TTL is detected as an orphan.
 - **Recovery policy** — on restart, `recover` (or an automatic pass at `serve`
