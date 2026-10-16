@@ -1,41 +1,54 @@
 # agent-shield
 
-**Secure fetch gateway + forward proxy for agent CLIs.**
+**Destination-validating forward proxy and secure fetch gateway for agent CLIs.**
 
-agent-shield sits between your agent CLI and the network. It blocks phishing/SSRF
-targets, revalidates redirects, filters dangerous content, detects
-prompt-injection, and wraps external content in an explicit **untrusted-data
-envelope** so fetched text can never become authority over the machine.
+agent-shield has two modes with **different guarantees**, and the difference matters:
 
-It also runs as an **HTTP forward proxy** that validates every destination
-(SSRF) *before* opening a tunnel — the headroom-style integration layer for
-agent CLIs.
+| Mode | What it does | What it does not do |
+| --- | --- | --- |
+| `serve` — forward proxy | Validates every destination before connecting, for CONNECT tunnels and absolute-form HTTP. This is the path real agent traffic uses, because HTTPS goes through CONNECT. | Does **not** inspect content. A CONNECT tunnel carries TLS the proxy cannot see into, so there is no content filtering, no prompt-injection detection and no envelope here. |
+| `fetch` — one-shot gateway | The full content pipeline: destination validation, redirect revalidation, content-type and size filtering, prompt-injection detection, untrusted-data envelope. | **Plaintext HTTP only.** Every scheme except `http` is rejected, so it cannot fetch the HTTPS URLs an agent normally encounters. |
+
+In short: `serve` decides *where* a connection may go and cannot see what travels over it; `fetch`
+can inspect content but only over plaintext HTTP. Neither mode alone gives you both, and the feature
+list below describes the two paths separately on purpose.
 
 ## Why
 
 An agent CLI must never let fetched content become trusted instructions.
 OpenCode, Claude Code, Cursor, command-code, kiro and other CLIs fetch web
 content; a hostile page could try to exfiltrate context or alter tool
-permissions. agent-shield gives you a single, policy-enforced choke point.
+permissions. `fetch` gives you a policy-enforced choke point for content you pull
+in yourself; `serve` gives you a choke point for the destinations a CLI reaches.
 
 ## Features
 
+### `serve` — destination validation
+
 - **SSRF protection** — loopback, private, link-local, metadata, CGNAT, reserved, and
   unspecified destinations (`0.0.0.0`, `::`) are blocked before the connection, for IPv4
-  and IPv6 alike.
+  and IPv6 alike, including 6to4 (`2002::/16`) and Teredo (`2001::/32`).
+- **Validated address, pinned connection** — the proxy resolves once, validates, and connects to the
+  exact `SocketAddr` it checked, so an answer that changes between the check and the connect cannot
+  escape the policy.
+- **Absolute-form GET and HEAD** — proxied with the destination validated first. POST is refused: it
+  needs real HTTP body framing, and agent CLIs use CONNECT instead.
+- **Bounded** — connect, read and write timeouts on every socket.
+- **Safe block reporting** — every block includes a reason code and a correlation id, without echoing
+  secrets or hostile payloads.
+
+### `fetch` — content pipeline (plaintext HTTP)
+
 - **Redirect safety** — every redirect hop is revalidated; a chain cannot
   escape to a blocked destination.
 - **Content filtering** — unsupported or dangerous content types, oversized
   bodies, and excessive redirects are rejected.
-- **Untrusted-data envelope** — content is returned tagged as untrusted and
-  cannot alter gateway policy or tool permissions.
-- **Prompt-injection quarantine** — injected instructions are detected or
-  quarantined by a versioned policy; uncertain classifications **fail closed**.
-- **Safe block reporting** — every block includes a reason code and a
-  correlation id, without echoing secrets or hostile payloads.
-- **Forward proxy server** — `serve` validates every CONNECT/absolute request
-  destination before opening the tunnel and connects to the exact address it validated
-  (`HTTP(S)_PROXY` compatible).
+- **Untrusted-data envelope** — content is returned tagged as untrusted.
+- **Prompt-injection detection** — content matching the pattern set is blocked. This is a
+  regular-expression classifier, not a semantic one: content that matches nothing is delivered as
+  untrusted, not verified safe. See "Security policy" for the precise claim.
+- **Fails closed on destinations** — an unresolvable name or an empty resolution is denied rather
+  than treated as safe.
 
 ## Build
 
@@ -54,8 +67,9 @@ python3 probes/e2e_full.py            # fetch E2E vs local fixtures (needs a bui
 python3 probes/e2e_proxy_server.py    # forward-proxy E2E vs real network (needs a built release binary)
 ```
 
-CI (`.github/workflows/ci.yml`) enforces fmt/clippy/test on every push and PR, and fails the
-build if the forward proxy reintroduces an unchecked `TcpStream::connect` on a host string.
+CI (`.github/workflows/ci.yml`) runs fmt/clippy/test on every push and PR, fails the build if the
+forward proxy reintroduces an unchecked `TcpStream::connect` on a host string, and runs the four
+probes above against the release binary so the proxy's byte-stream behaviour has an automated witness.
 
 ### Running the gates without installing Rust on the host
 
@@ -72,8 +86,10 @@ docker run --rm -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target -e HOME=/t
 ## CLI usage
 
 ```bash
-agent-shield fetch <url>          # fetch through the security policy (envelope)
-agent-shield serve [--port N]     # forward proxy (default port 8087)
+agent-shield fetch <url>                       # content pipeline (plaintext HTTP, envelope)
+agent-shield serve [--port N]                  # forward proxy (default port 8087)
+agent-shield wrap --list                       # supported agent CLIs and detection
+agent-shield wrap <cli> [--port N] [--dry-run]  # point a CLI at the proxy (prints the exports)
 agent-shield --help
 ```
 
@@ -121,8 +137,27 @@ HTTPS_PROXY=http://127.0.0.1:8087 HTTP_PROXY=http://127.0.0.1:8087 opencode
 - **kiro**: export the env vars; kiro honors standard proxy variables.
 - **cursor**: export the env vars before launching.
 
-The proxy responds to `CONNECT` and absolute-form requests, so plain
-`HTTP(S)_PROXY` routing works without per-tool plugins.
+The proxy responds to `CONNECT` plus absolute-form `GET`/`HEAD`, so plain `HTTP(S)_PROXY` routing
+works without per-tool plugins. Absolute-form `POST` is refused rather than mis-framed; use the
+`CONNECT` path (i.e. `https://`) for anything with a request body.
+
+### Reaching internal hosts
+
+The private-IP block is deliberate, so internal destinations are refused by default. The sanctioned
+bypass is `NO_PROXY`, which is standard, per-client, and says exactly what it means — internal traffic
+does not go through the proxy:
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8087 HTTP_PROXY=http://127.0.0.1:8087
+export NO_PROXY=localhost,127.0.0.1,.internal.example.com,192.168.0.0/16
+```
+
+`agent-shield wrap <cli>` prints a starting value; extend it with the hosts you actually need.
+Support for CIDR entries in `NO_PROXY` varies by client, so verify with the tool you use.
+
+> **Testing escape**: `AGP_ALLOW_PRIVATE=1` disables the private-IP block for every destination,
+> including cloud metadata, and prints an explicit warning. It exists for local fixture testing.
+> Never use it in production — `NO_PROXY` is the narrow tool for internal hosts.
 
 ### Testing the setup
 
@@ -142,26 +177,36 @@ curl -s -x http://127.0.0.1:8087 http://example.com/ -o /dev/null -w "%{http_cod
 HTTPS_PROXY=http://127.0.0.1:8087 HTTP_PROXY=http://127.0.0.1:8087 opencode
 ```
 
-> **Testing escape**: `AGP_ALLOW_PRIVATE=1` disables the private-IP block for
-> local fixture testing (prints an explicit warning). Never use in production.
-
 ## Security policy
 
+Applies to both modes unless a bullet says otherwise.
+
 - **Blocked destinations**: loopback, RFC 1918 private, link-local and cloud metadata,
-  RFC 6598 CGNAT (`100.64.0.0/10`), `0.0.0.0/8`, `192.0.0.0/24`, `198.18.0.0/15`,
-  `240.0.0.0/4`, plus IPv6 loopback, the unspecified address `::`, multicast, IPv4-mapped,
-  link-local, and unique-local space. TEST-NET ranges stay reachable: they are unroutable
-  documentation space.
+  RFC 6598 CGNAT (`100.64.0.0/10`), `0.0.0.0/8`, `192.0.0.0/24`, `192.88.99.0/24`,
+  `198.18.0.0/15`, `240.0.0.0/4`, plus IPv6 loopback, the unspecified address `::`, multicast,
+  IPv4-mapped, link-local and unique-local space, and 6to4/Teredo. TEST-NET ranges stay reachable:
+  they are unroutable documentation space.
+- **Deny-list, not allow-list.** An address is refused only if it matches an entry in the table, so a
+  special-purpose range that is not listed passes. The table is curated; every entry has a test.
 - **One predicate, every caller**: `is_blocked_ip` serves the fetch path, the redirect
   revalidation, and the forward proxy, so a range cannot be missing from only one of them.
 - **Validated address, pinned connection**: the proxy resolves once, validates, and connects to
   the exact `SocketAddr` it checked — it never re-resolves the host name after validation, which
   closes the DNS-rebinding window.
-- **Fails closed**: an unresolvable name, an empty resolution, or an uncertain classification is
-  denied, never treated as safe.
+- **Fails closed on destinations**: an unresolvable name or an empty resolution is denied, never
+  treated as safe.
 - **Bounded**: connect, read, and write timeouts on both the fetch and proxy paths.
 - Blocks are reported with a safe reason code and correlation id; secrets and hostile payloads are
   never echoed.
+
+### What the `fetch` content pipeline does not claim
+
+- **Prompt-injection detection is a regular-expression classifier** (`injection_policy_version: "v1"`).
+  Content matching a pattern is blocked. Content matching nothing is delivered inside the untrusted
+  envelope, which is a *label*, not a verdict — it is not evidence that the content is safe. A
+  downstream agent decides what that label means; this tool cannot enforce how it interprets content.
+- **The envelope does not make content inert.** It marks content as untrusted. Whether that changes
+  the consuming agent's behaviour is the agent's business, not something a fetch gateway can guarantee.
 
 Every claim above is backed by a test in the repository; `cargo test` and `probes/checklist.py`
 are the evidence.

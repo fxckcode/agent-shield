@@ -21,6 +21,7 @@ const BLOCKED_IPV4_CIDRS: &[(u32, u8)] = &[
     (0xA9FE_0000, 16), // 169.254.0.0/16   link-local, incl. cloud metadata
     (0xAC10_0000, 12), // 172.16.0.0/12    RFC 1918
     (0xC000_0000, 24), // 192.0.0.0/24     IETF protocol assignments
+    (0xC058_6300, 24), // 192.88.99.0/24   6to4 relay anycast
     (0xC0A8_0000, 16), // 192.168.0.0/16   RFC 1918
     (0xC612_0000, 15), // 198.18.0.0/15    benchmarking
     (0xF000_0000, 4),  // 240.0.0.0/4      reserved, incl. 255.255.255.255
@@ -28,11 +29,14 @@ const BLOCKED_IPV4_CIDRS: &[(u32, u8)] = &[
 
 /// Check if an IPv4 address is reserved, private, loopback, or metadata.
 ///
-/// Deliberately conservative: only globally routable space is allowed, so
-/// special-purpose ranges fail closed rather than requiring an entry each time
-/// IANA adds one. The TEST-NET ranges (`192.0.2.0/24`, `198.51.100.0/24`,
-/// `203.0.113.0/24`) stay allowed: they are unroutable documentation space and
-/// are used by the test suite.
+/// This is an explicit deny-list, not an "allow only global space" rule: an
+/// address passes unless one of `BLOCKED_IPV4_CIDRS` matches it, so a
+/// special-purpose range that is not listed above will pass. The list is
+/// curated deliberately and every entry is asserted in the tests below.
+///
+/// The TEST-NET ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`)
+/// stay allowed: they are unroutable documentation space and the test suite
+/// uses them as known-public addresses.
 pub fn is_blocked_ipv4(ip: &Ipv4Addr) -> bool {
     let value = u32::from(*ip);
     BLOCKED_IPV4_CIDRS.iter().any(|&(network, prefix)| {
@@ -61,6 +65,14 @@ pub fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
     }
     // Unique local: fc00::/7
     if segments[0] & 0xfe00 == 0xfc00 {
+        return true;
+    }
+    // 6to4: 2002::/16 embeds an IPv4 address in the address and routes it.
+    if segments[0] == 0x2002 {
+        return true;
+    }
+    // Teredo: 2001::/32 embeds an IPv4 address and routes it.
+    if segments[0] == 0x2001 && segments[1] == 0 {
         return true;
     }
     false
@@ -224,6 +236,7 @@ mod tests {
         ("172.16.0.1", "RFC 1918 lower bound"),
         ("172.31.255.255", "RFC 1918 upper bound"),
         ("192.0.0.1", "IETF protocol assignments"),
+        ("192.88.99.1", "6to4 relay anycast"),
         ("192.168.0.1", "RFC 1918"),
         ("198.18.0.1", "benchmarking lower bound"),
         ("198.19.255.255", "benchmarking upper bound"),
@@ -252,6 +265,8 @@ mod tests {
         ("fe80::1", "link-local"),
         ("fc00::1", "unique local"),
         ("fd7a:115c:a1e0::1", "unique local (Tailscale-style ULA)"),
+        ("2002::1", "6to4, embeds an IPv4 address"),
+        ("2001::1", "Teredo, embeds an IPv4 address"),
         ("ff02::1", "multicast"),
     ];
 

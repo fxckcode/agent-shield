@@ -1,1 +1,5 @@
 /target
+
+# Python bytecode from the probes under probes/
+__pycache__/
+*.pyc
