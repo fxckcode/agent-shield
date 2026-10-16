@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixture HTTP local persistente para pruebas de integración de agent-shield."""
+"""Persistent local HTTP fixture for agent-shield integration tests."""
 import http.server
 import sys
 import threading
@@ -22,5 +22,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"fixture en 127.0.0.1:{PORT}")
+    print(f"fixture listening on 127.0.0.1:{PORT}")
     srv.serve_forever()

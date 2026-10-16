@@ -6,6 +6,13 @@
 //! connection is opened, and the connection uses exactly the addresses that
 //! passed that check.
 //!
+//! **Scope of the guarantee:** this module validates *where* a connection may go.
+//! It does not inspect what travels over it. A CONNECT tunnel carries TLS that
+//! the proxy cannot see into, so content filtering, prompt-injection detection
+//! and the untrusted-data envelope do not apply here — they live in
+//! `controlled_fetch`, which is a separate path. Do not describe this proxy as
+//! filtering content.
+//!
 //! Why the addresses matter: resolving the hostname a second time at connect
 //! time re-opens a TOCTOU window, where a hostile name answers with a public
 //! address for the check and a loopback address for the connection. This module
@@ -413,12 +420,19 @@ fn handle_client(mut stream: TcpStream) {
         return;
     }
 
-    if line.starts_with("GET ") || line.starts_with("POST ") || line.starts_with("HEAD ") {
+    // GET and HEAD only. They carry no request body, so the absolute-form path
+    // cannot truncate or mis-frame one. Accepting POST would require real HTTP
+    // body framing (Content-Length, chunked, Expect: 100-continue) for plaintext
+    // traffic that agent CLIs do not use; rejecting it keeps the path correct by
+    // construction.
+    if line.starts_with("GET ") || line.starts_with("HEAD ") {
         let _ = handle_absolute(&mut stream, &line, &corr);
         return;
     }
 
-    let _ = stream.write_all(&bad_request("unsupported proxy request"));
+    let _ = stream.write_all(&bad_request(
+        "unsupported proxy request; this proxy accepts CONNECT, and absolute-form GET or HEAD",
+    ));
 }
 
 /// Run the forward-proxy server on 127.0.0.1:<port>.
