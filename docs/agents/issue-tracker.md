@@ -24,10 +24,3 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> --comments`.
-
-## Wayfinding operations
-
-Used by `/wayfinder`. The **map** is a single issue labelled `wayfinder:map`,
-with **child** issues as tickets linked as sub-issues (or `Part of #<map>` in the
-child body). Blocking uses GitHub native issue dependencies
-(`gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<id>`).
