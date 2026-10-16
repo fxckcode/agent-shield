@@ -87,9 +87,10 @@ docker run --rm -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target -e HOME=/t
 ## CLI usage
 
 ```bash
-agent-shield fetch <url>                       # content pipeline (plaintext HTTP, envelope)
-agent-shield serve [--port N]                  # forward proxy (default port 8087)
-agent-shield wrap --list                       # supported agent CLIs and detection
+agent-shield fetch <url>                        # content pipeline (plaintext HTTP, envelope)
+agent-shield serve [--port N]                   # forward proxy (default port 8087)
+agent-shield recover [--state-dir DIR] [--policy resume|block] [--ttl SECS]
+agent-shield wrap --list                        # supported agent CLIs and detection
 agent-shield wrap <cli> [--port N] [--dry-run]  # point a CLI at the proxy (prints the exports)
 agent-shield --help
 ```
@@ -177,6 +178,55 @@ curl -s -x http://127.0.0.1:8087 http://example.com/ -o /dev/null -w "%{http_cod
 # 4. run an agent through it
 HTTPS_PROXY=http://127.0.0.1:8087 HTTP_PROXY=http://127.0.0.1:8087 opencode
 ```
+
+## Durable recovery (interrupted fetch work)
+
+The `fetch` pipeline can persist its work units to a durable store so an
+interrupted process recovers safely on restart:
+
+- **Work units** — `parse`, `validate_target`, `fetch` (the only unit with
+  external side effects: network I/O), and `process` (validate + classify +
+  wrap). Every transition is written to disk *before* the next step runs.
+- **At-least-once, with a persisted response** — a work unit already recorded
+  as completed is never executed twice: a run resumed after `fetch` completed
+  reloads the raw response from the persisted payload and continues without a
+  second network hit. The window between *sending* the remote request and
+  *recording* the `fetch` unit as completed cannot be closed from the client: a
+  crash inside it leaves the unit unfinished, so the resumed run re-fetches and
+  the request may reach the server twice. Pair this with an idempotent endpoint
+  on the far side, or use `--policy block` to fail closed instead of resuming.
+- **Heartbeat / TTL** — each running unit carries a heartbeat; a record whose
+  heartbeat exceeds the TTL is detected as an orphan.
+- **Recovery policy** — on restart, `recover` (or an automatic pass at `serve`
+  startup) decides per request: `resume` (re-open fresh units, mark stale
+  orphans failed) or `block` (fail closed).
+- **Audit trail** — every decision is appended to `audit.log` with an outcome
+  in `{resumed, blocked, failed}`, a request id, unit id, and reason.
+
+Configuration:
+
+| Setting | Flag | Env | Default |
+|---|---|---|---|
+| State dir | `--state-dir DIR` | `AGP_STATE_DIR` | off (opt-in) |
+| Recovery policy | `--policy resume\|block` | `AGP_RECOVERY_POLICY` | `resume` |
+| Heartbeat TTL | `--ttl SECS` | `AGP_HEARTBEAT_TTL_SECS` | `300` |
+
+```bash
+# Run a fetch with durable work units
+agent-shield fetch --state-dir /var/lib/agent-shield https://example.com/
+
+# Proxy restart: recover interrupted requests, then resume one of them
+# (the completed `fetch` unit is loaded from the persisted payload; the
+# network effect is NOT re-executed)
+agent-shield recover --state-dir /var/lib/agent-shield --policy resume
+agent-shield fetch --state-dir /var/lib/agent-shield \
+  --resume <request_id> https://example.com/
+```
+
+State layout under the state dir: `requests/<request_id>.json` (one JSON
+record per request), `payloads/<request_id>.(bin|out)` (raw response / final
+validated content), and `audit.log`. Payloads are removed when a request
+reaches a terminal state (completed/blocked/failed).
 
 ## Security policy
 
