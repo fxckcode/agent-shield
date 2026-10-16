@@ -1,5 +1,4 @@
-//! Probe test for DKL-24 unit 003: Content-type/body-size enforcement
-//! and untrusted-data envelope wrapping.
+//! Content-type/body-size enforcement and untrusted-data envelope wrapping.
 //!
 //! Acceptance criteria:
 //! 1. Responses with disallowed Content-Type or oversized body are blocked
@@ -7,9 +6,7 @@
 //! 2. Content that passes all validations is returned inside an untrusted-data
 //!    envelope that cannot alter gateway policy or tool permissions.
 
-use agent_guard_proxy::controlled_fetch::{
-    BlockReason, FetchError, FetchPolicy, UntrustedEnvelope,
-};
+use agent_shield::controlled_fetch::{BlockReason, FetchError, FetchPolicy, UntrustedEnvelope};
 
 // Re-exercise the content filter through the public policy surface.
 // The content_filter module is internal, so we test via fetch_with_policy

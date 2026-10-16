@@ -1,7 +1,7 @@
-use agent_guard_proxy::controlled_fetch::{
+use agent_shield::controlled_fetch::{
     fetch_with_policy, FetchPolicy, FetchRequest, UntrustedEnvelope,
 };
-use agent_guard_proxy::forward_server;
+use agent_shield::forward_server;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
