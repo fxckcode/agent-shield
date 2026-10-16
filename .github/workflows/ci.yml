@@ -27,3 +27,23 @@ jobs:
             exit 1
           fi
           echo "no unchecked TcpStream::connect in the forward proxy"
+
+  e2e:
+    # The Rust tests cover the policy logic. They cannot cover byte-stream
+    # behaviour of the proxy, so the real binary is driven with raw sockets here.
+    name: end-to-end probes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Fetch pipeline against local fixtures (no external network)
+        run: python3 probes/e2e_full.py
+      - name: Acceptance checklist
+        run: python3 probes/checklist.py
+      # These two fetch a public host, so they need outbound network.
+      - name: Fetch pipeline against a public host
+        run: python3 probes/e2e_smoke.py
+      - name: Forward proxy over raw sockets and a real TLS tunnel
+        run: python3 probes/e2e_proxy_server.py
