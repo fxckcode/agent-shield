@@ -89,6 +89,31 @@ def run(url, label, expect, reason=None):
         print(f"[FAIL] {label}: {e}")
 
 
+def run_escape(url, label):
+    """Assert the escape disables the destination policy, whatever the network does.
+
+    With AGP_ALLOW_PRIVATE=1 no destination may be refused with SSRF_PRIVATE_IP. The
+    outcome beyond that is environment-dependent: a metadata address usually fails at
+    the transport, except on a host that actually serves metadata there — a GitHub
+    Actions runner answers at 169.254.169.254, which is exactly the situation the
+    block exists for. Asserting a transport error would be asserting the host, not
+    the software.
+    """
+    env = dict(os.environ, AGP_ALLOW_PRIVATE="1")
+    try:
+        r = subprocess.run(
+            [BIN, "fetch", url], capture_output=True, text=True, timeout=25, env=env
+        )
+        out = (r.stdout or "").strip()
+        ok = '"reason_code":"SSRF_PRIVATE_IP"' not in out
+        results.append((label, "PASS" if ok else "FAIL", out[:170]))
+        print(f"[{'PASS' if ok else 'FAIL'}] {label} (exit={r.returncode})")
+        print(f"        -> {out[:170]}")
+    except Exception as e:  # noqa: BLE001 - report any harness failure
+        results.append((label, "FAIL", str(e)[:120]))
+        print(f"[FAIL] {label}: {e}")
+
+
 def main():
     if not os.path.exists(BIN):
         print(f"FATAL: binary not found at {BIN}; run `cargo build --release` first")
@@ -107,15 +132,12 @@ def main():
     run(f"{ADDR}/injection-html", "7. prompt-injection inside HTML detected", "blocked")
     run(f"{ADDR}/big", "8. body within the size limit still allowed", "allowed")
     # Last, because it is the one case the escape changes the meaning of: with the
-    # escape on, the private-IP check is off, so the redirect hop to the metadata
-    # address is attempted and fails at the transport rather than being blocked by
-    # policy. Revalidated properly by the unit tests and by e2e_smoke.py without
-    # the escape, where the same origin is refused as SSRF_PRIVATE_IP.
-    run(
+    # escape on, the private-IP check is off, so this redirect is no longer refused by
+    # policy. That is precisely why the escape is testing-only, and this case asserts
+    # nothing more than that.
+    run_escape(
         f"{ADDR}/redirect-private",
-        "9. redirect to metadata with the escape on: transport failure, not a policy block",
-        "blocked",
-        "TRANSPORT_ERROR",
+        "9. with the escape on no destination is refused as SSRF_PRIVATE_IP",
     )
 
     print("\n== Summary ==")
