@@ -1,12 +1,11 @@
-/// Probe: DKL-24 — Verify that the proxy blocks fetches to private/loopback/metadata addresses.
+/// Verify that the controlled-fetch path blocks private, loopback, link-local, and metadata
+/// destinations, including the unspecified addresses (`0.0.0.0`, `::`) that are routable here.
 ///
 /// This probe imports the controlled-fetch module and attempts a fetch to 127.0.0.1.
 /// If the security layer exists and works, the fetch is blocked with a safe reason code.
 /// If the module doesn't exist, compilation fails — proving the feature is not implemented.
 // Attempt to import the expected public API for controlled fetch.
-use agent_guard_proxy::controlled_fetch::{
-    fetch_with_policy, BlockReason, FetchPolicy, FetchRequest,
-};
+use agent_shield::controlled_fetch::{fetch_with_policy, BlockReason, FetchPolicy, FetchRequest};
 
 #[test]
 fn blocks_loopback_address() {

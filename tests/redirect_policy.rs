@@ -1,9 +1,9 @@
-/// Probe: DKL-24-unit-002 — Redirect-following policy enforcement.
+/// Redirect-following policy enforcement.
 ///
 /// Verifies:
 /// 1. Per-hop IP/host policy revalidation blocks redirects to disallowed destinations.
 /// 2. Excessive redirect chains are blocked with EXCESSIVE_REDIRECTS reason code.
-use agent_guard_proxy::controlled_fetch::{BlockReason, FetchError, FetchPolicy, FetchRequest};
+use agent_shield::controlled_fetch::{BlockReason, FetchError, FetchPolicy, FetchRequest};
 
 // We test via the internal testable API by importing the crate's internal modules.
 // Since follow_redirects_with_transport is pub(crate), we test the public API indirectly
@@ -20,7 +20,7 @@ fn redirect_to_private_ip_returns_correct_reason_code() {
 
     // 10.x.x.x is RFC1918 private
     let req = FetchRequest::new("http://10.0.0.1/redirected-target");
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
     assert!(result.is_err());
     let err = result.unwrap_err();
     // Initial target block uses SSRF_PRIVATE_IP
@@ -50,7 +50,7 @@ fn excessive_redirect_policy_is_configurable() {
 fn blocked_redirect_response_does_not_leak_target() {
     let policy = FetchPolicy::default();
     let req = FetchRequest::new("http://192.168.0.1/internal-admin");
-    let result = agent_guard_proxy::controlled_fetch::fetch_with_policy(&req, &policy);
+    let result = agent_shield::controlled_fetch::fetch_with_policy(&req, &policy);
 
     assert!(result.is_err());
     let err = result.unwrap_err();

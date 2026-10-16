@@ -1,4 +1,4 @@
-//! Probe: DKL-24-unit-004 — Prompt-injection detection and fail-closed behavior.
+//! Prompt-injection detection and fail-closed behavior.
 //!
 //! Acceptance criteria:
 //! 1. Fetched content matching versioned injection patterns is quarantined/flagged
@@ -6,7 +6,7 @@
 //! 2. When classifier confidence is below the policy threshold, the proxy fails
 //!    closed and blocks delivery.
 
-use agent_guard_proxy::controlled_fetch::{FetchError, FetchPolicy};
+use agent_shield::controlled_fetch::{FetchError, FetchPolicy};
 
 // Re-test via the public classify_content path indirectly through fetch_with_policy
 // but since fetch_with_policy requires network simulation, we test the contract
@@ -22,7 +22,7 @@ fn classify(body: &[u8], policy: &FetchPolicy) -> Result<Vec<u8>, FetchError> {
     //
     // Since classify_content is pub(crate), we test the integration contract
     // through the observable behavior of the full pipeline error variants.
-    agent_guard_proxy::controlled_fetch::classify_content_for_test(body, policy, "probe-004")
+    agent_shield::controlled_fetch::classify_content_for_test(body, policy, "probe-004")
 }
 
 // --- Criterion 1: Injection patterns are blocked, content is NOT delivered ---

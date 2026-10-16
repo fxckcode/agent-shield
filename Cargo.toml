@@ -2,6 +2,13 @@
 name = "agent-shield"
 version = "0.1.0"
 edition = "2021"
+description = "Secure fetch gateway and HTTP forward proxy for agent CLIs: SSRF protection, prompt-injection detection, and an untrusted-data envelope."
+license = "Apache-2.0"
+repository = "https://github.com/fxckcode/agent-shield"
+readme = "README.md"
+keywords = ["ssrf", "proxy", "security", "llm", "agents"]
+categories = ["command-line-utilities", "network-programming"]
+authors = ["fxckcode <diegoale8582@hotmail.com>"]
 
 [dependencies]
 uuid = { version = "1.10.0", features = ["v4"] }
@@ -9,7 +16,7 @@ url = "2.5.2"
 regex = "1.10.6"
 
 [lib]
-name = "agent_guard_proxy"
+name = "agent_shield"
 path = "src/lib.rs"
 
 [[bin]]
